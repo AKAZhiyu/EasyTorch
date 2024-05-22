@@ -168,8 +168,221 @@ def data_iter_list(batch_size, features, labels):
     
     return batches
 
+def linreg(X, w):
+    """
+    Perform linear regression computation.
 
+    This function calculates the predicted values (y_hat) using the linear regression model
+    y_hat = Xw, where X is the matrix of input features, and w is the vector of weights.
 
+    Parameters:
+    - X (torch.Tensor): The input feature matrix of size (n_samples, n_features).
+    - w (torch.Tensor): The weight vector of size (n_features, 1).
+
+    Returns:
+    - torch.Tensor: The predicted values vector of size (n_samples, 1).
+    """
+    return torch.mm(X, w)
+
+def squared_loss(y_hat, y):
+    """
+    Calculate the mean squared error loss.
+
+    This function computes the mean squared error (MSE) between the predicted values (y_hat)
+    and the actual values (y). It is used to evaluate the performance of the regression model.
+
+    Parameters:
+    - y_hat (torch.Tensor): Predicted values tensor, should be a 2D tensor with shape (n_samples, 1).
+    - y (torch.Tensor): Actual values tensor, should be a 2D tensor with shape (n_samples, 1).
+
+    Returns:
+    - torch.Tensor: The mean squared error loss as a scalar tensor.
+    """
+    num_ = y.numel()  # Total number of elements in y
+    sse = torch.sum((y_hat - y) ** 2)  # Sum of squared errors
+    return sse / num_  # Mean squared error
+
+def sgd(params, lr):
+    """
+    Perform a single step of stochastic gradient descent (SGD) on given parameters.
+
+    This function updates the parameters based on the gradient of the loss function.
+    It modifies the parameters in-place and resets their gradients after updating.
+
+    Parameters:
+    - params (torch.Tensor): Tensor containing the parameters to be updated.
+    - lr (float): Learning rate, a scalar defining the step size during optimization.
+
+    Returns:
+    - None
+    """
+    params.data -= lr * params.grad  # Update the parameters
+    params.grad.zero_()  # Reset gradients to zero after updating
+
+def sigmoid(z):
+    """
+    Compute the sigmoid activation function.
+
+    The sigmoid function is defined as 1 / (1 + exp(-z)), where `z` can be a number,
+    a vector, or a matrix. This function is often used in logistic regression and
+    neural networks to introduce nonlinearity.
+
+    Parameters:
+    - z (torch.Tensor): The input tensor.
+
+    Returns:
+    - torch.Tensor: The output tensor where the sigmoid function has been applied element-wise.
+    """
+    return 1 / (1 + torch.exp(-z))
+
+def logistic(X, w):
+    """
+    Apply logistic regression model to input data.
+
+    This function computes the predicted probabilities using a logistic regression model
+    with parameters `w`. The logistic function is sigmoid(Xw), where X is the feature matrix
+    and w is the coefficient vector.
+
+    Parameters:
+    - X (torch.Tensor): Feature matrix of size (n_samples, n_features).
+    - w (torch.Tensor): Weight vector of size (n_features, 1).
+
+    Returns:
+    - torch.Tensor: Predicted probabilities for each sample (n_samples, 1).
+    """
+    return sigmoid(torch.mm(X, w))
+
+def cal(sigma, p=0.5):
+    """
+    Calculate the class predictions from probability estimates.
+
+    This function converts probability estimates into class predictions based on a threshold `p`.
+    Values greater than or equal to `p` are classified as 1, and below `p` as 0.
+
+    Parameters:
+    - sigma (torch.Tensor): Probability estimates, typically from a logistic regression.
+    - p (float, optional): The threshold for converting probabilities to class predictions. Default is 0.5.
+
+    Returns:
+    - torch.Tensor: Class predictions (0 or 1) based on the threshold.
+    """
+    return (sigma >= p).float()
+
+def accuracy(sigma, y):
+    """
+    Calculate the accuracy of predictions.
+
+    This function computes the accuracy as the percentage of correct predictions
+    made by the model. It compares the predicted values (after thresholding) to the actual
+    values `y`.
+
+    Parameters:
+    - sigma (torch.Tensor): Predicted probabilities before thresholding.
+    - y (torch.Tensor): Actual labels (ground truth), should be of the same shape as the output of `cal`.
+
+    Returns:
+    - float: The accuracy of the predictions, a scalar value between 0 and 1.
+    """
+    predictions = cal(sigma).flatten()  # Compute binary predictions
+    correct_predictions = predictions == y.flatten()  # Compare predictions with actual values
+    return torch.mean(correct_predictions.float())  # Mean of correct predictions
+
+def acc_zhat(zhat, y):
+    """
+    Compute logistic regression accuracy from the output of a linear model.
+
+    This function applies the sigmoid activation function to the outputs of a linear equation (zhat),
+    then computes the accuracy by comparing the thresholded sigmoid values to the actual labels.
+    The sigmoid function maps the linear outputs to probabilities, and accuracy is computed as the
+    proportion of correct predictions.
+
+    Parameters:
+    - zhat (torch.Tensor): The output tensor from a linear equation model. This tensor typically represents the logits.
+    - y (torch.Tensor): Actual binary labels (0 or 1) for each example in the dataset.
+
+    Returns:
+    - float: The accuracy of predictions, represented as a float between 0 and 1.
+    """
+    sigma = sigmoid(zhat)  # Convert logits to probabilities using sigmoid
+    return accuracy(sigma, y)  # Calculate and return the accuracy
+
+def cross_entropy(sigma, y):
+    """
+    Compute the cross-entropy loss between predictions and actual values.
+
+    The cross-entropy loss is a common loss function for classification tasks, especially
+    with logistic models and neural networks. It measures the performance of a classification
+    model whose output is a probability value between 0 and 1.
+
+    Parameters:
+    - sigma (torch.Tensor): Predicted probabilities, each element should be between 0 and 1.
+    - y (torch.Tensor): Actual binary labels (0 or 1), must have the same shape as `sigma`.
+
+    Returns:
+    - torch.Tensor: The computed cross-entropy loss as a scalar.
+    """
+    loss = -(1 / y.numel()) * torch.sum((1 - y) * torch.log(1 - sigma) + y * torch.log(sigma))
+    return loss
+
+def softmax(X, w):
+    """
+    Apply the softmax function to the linear combinations of inputs and weights.
+
+    The softmax function is used primarily in multi-class classification problems. It turns
+    logits (the outputs of linear layers) into probabilities by taking the exponent of each output
+    and then normalizing these values by dividing by the sum of all exponents.
+
+    Parameters:
+    - X (torch.Tensor): Input features matrix of size (n_samples, n_features).
+    - w (torch.Tensor): Weight matrix of size (n_features, n_classes).
+
+    Returns:
+    - torch.Tensor: The softmax probabilities for each class, shape (n_samples, n_classes).
+    """
+    logits = torch.mm(X, w)
+    exp_logits = torch.exp(logits)
+    sum_exp = torch.sum(exp_logits, dim=1, keepdim=True)
+    softmax_output = exp_logits / sum_exp
+    return softmax_output
+
+def m_cross_entropy(soft_z, y):
+    """
+    Calculate the mean cross-entropy loss for multi-class classification using softmax outputs.
+
+    This function computes the cross-entropy loss, which is a measure of the difference between
+    the true distribution (encoded in `y`) and the predicted distribution (`soft_z`). This is typically
+    used when the outputs are probabilities obtained via softmax.
+
+    Parameters:
+    - soft_z (torch.Tensor): Softmax probabilities for each class. Each row corresponds to a single example
+                             and should sum to 1. The shape is (n_samples, n_classes).
+    - y (torch.Tensor): Actual labels (indices of the true class). Shape is (n_samples,).
+
+    Returns:
+    - torch.Tensor: The mean cross-entropy loss computed across all samples as a scalar.
+    """
+    y = y.long()  # Ensure labels are in long format for indexing
+    prob_real = torch.gather(soft_z, 1, y.view(-1, 1))  # Gather the probabilities corresponding to the true labels
+    return -(torch.log(prob_real).sum() / y.numel())  # Compute mean cross-entropy loss
+
+def m_accuracy(soft_z, y):
+    """
+    Calculate the classification accuracy based on softmax probabilities.
+
+    Accuracy is the proportion of true results (both true positives and true negatives) among the total number
+    of cases examined. This function determines the predicted class as the one with the highest probability
+    from softmax, then compares these predictions to the actual labels.
+
+    Parameters:
+    - soft_z (torch.Tensor): Softmax probabilities for each class, shape (n_samples, n_classes).
+    - y (torch.Tensor): Actual labels, shape (n_samples,).
+
+    Returns:
+    - float: Accuracy as a float, representing the proportion of correctly predicted samples.
+    """
+    predictions = torch.argmax(soft_z, dim=1)  # Find the predicted classes (indices with max probability)
+    correct_predictions = predictions.flatten() == y.flatten()  # Compare predictions to true labels
+    return torch.mean(correct_predictions.float())  # Calculate mean accuracy
 
 
 
