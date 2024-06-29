@@ -10,7 +10,8 @@ import numpy as np
 import torch
 from torch import nn,optim
 import torch.nn.functional as F
-from torch.utils.data import Dataset,TensorDataset,DataLoader
+from torch.utils.data import Dataset, TensorDataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split
 
 def tensorGenReg(num_examples=1000, w=[2, -1, 1], bias=True, delta=0.01, deg=1):
     """
@@ -385,4 +386,184 @@ def m_accuracy(soft_z, y):
     return torch.mean(correct_predictions.float())  # Calculate mean accuracy
 
 
+class GenData(Dataset):
+    """
+    A custom dataset class for handling manually created data for use with PyTorch data loaders.
+
+    This class is designed to store features and labels of a dataset, allowing for easy integration
+    with PyTorch's data handling utilities like DataLoader.
+
+    Attributes:
+        features (torch.Tensor): A tensor containing the features of the dataset.
+        labels (torch.Tensor): A tensor containing the labels of the dataset.
+        lens (int): The total number of examples in the dataset.
+    """
+    def __init__(self, features, labels):
+        """
+        Initialize the dataset with features and labels.
+
+        Parameters:
+            features (torch.Tensor): The features of the dataset.
+            labels (torch.Tensor): The labels of the dataset.
+        """
+        self.features = features
+        self.labels = labels
+        self.lens = len(features)
+
+    def __getitem__(self, index):
+        """
+        Retrieve a single item from the dataset.
+
+        Parameters:
+            index (int): The index of the item to retrieve.
+
+        Returns:
+            tuple: A tuple containing the features and label of the requested item.
+        """
+        return self.features[index, :], self.labels[index]
+
+    def __len__(self):
+        """
+        Get the total number of items in the dataset.
+
+        Returns:
+            int: The total number of items in the dataset.
+        """
+        return self.lens
+
+
+def data_split(features, labels, rate=0.7):
+    """
+    Splits the input features and labels into training and testing datasets.
+
+    Args:
+        features (Tensor): The input feature tensor.
+        labels (Tensor): The input label tensor.
+        rate (float, optional): The fraction of the dataset to be used as the training set. Defaults to 0.7.
+
+    Returns:
+        tuple: A tuple containing the training features, test features, training labels, and test labels.
+    """
+    num_examples = len(features)  # Total number of examples
+    indices = list(range(num_examples))  # Create a list of indices
+    random.shuffle(indices)  # Shuffle indices randomly
+
+    num_train = int(num_examples * rate)  # Calculate the number of training examples
+    indices_train = indices[:num_train]  # Indices for the training set
+    indices_test = indices[num_train:]  # Indices for the testing set
+
+    Xtrain = features[indices_train]  # Extract training features
+    ytrain = labels[indices_train]  # Extract training labels
+    Xtest = features[indices_test]  # Extract testing features
+    ytest = labels[indices_test]  # Extract testing labels
+
+    return Xtrain, Xtest, ytrain, ytest
+
+
+def split_loader(features, labels, batch_size=10, rate=0.7):
+    """
+    Wrap, split, and load the data into PyTorch DataLoader objects.
+
+    This function takes features and labels as input, wraps them into a Dataset object,
+    then splits the dataset into training and testing datasets based on a specified rate.
+    It returns DataLoader objects for both the training and testing sets.
+
+    Parameters:
+        features (torch.Tensor): The input features of the dataset.
+        labels (torch.Tensor): The labels corresponding to the input features.
+        batch_size (int, optional): The number of samples in each batch of data. Defaults to 10.
+        rate (float, optional): The proportion of the dataset to include in the train split. Defaults to 0.7.
+
+    Returns:
+        tuple: A tuple containing two DataLoader instances for the training and testing datasets.
+    """
+    data = GenData(features, labels)
+    num_train = int(len(data) * rate)
+    num_test = len(data) - num_train
+    data_train, data_test = random_split(data, [num_train, num_test])
+    train_loader = DataLoader(data_train, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(data_test, batch_size=batch_size, shuffle=False)
+
+    return train_loader, test_loader
+
+
+def fit(net, criterion, optimizer, batchdata, epochs=3, cla=False):
+    """
+    Train a machine learning model using specified data and configuration.
+
+    This function handles the training loop for a neural network or any differentiable model.
+    It iteratively feeds batches of data from `batchdata` to the model, computes the loss,
+    backpropagates to update the model's weights, and optionally handles specifics for classification.
+
+    Parameters:
+    - net (torch.nn.Module): The model to be trained. Must be a subclass of `torch.nn.Module`.
+    - criterion (callable): The loss function to measure the discrepancy between predicted and actual values.
+    - optimizer (torch.optim.Optimizer): The optimization algorithm used to update model weights.
+    - batchdata (iterable): An iterable (often a DataLoader) that provides batches of data in the form (features, labels).
+    - epochs (int, optional): The number of times to iterate over the entire dataset. Defaults to 3.
+    - cla (bool, optional): Whether the training involves a classification task, which affects how labels are processed. Defaults to False.
+
+    Returns:
+    - None: This function directly modifies the model `net` by updating its weights during training.
+    """
+    for epoch in range(epochs):
+        for X, y in batchdata:
+            if cla:
+                y = y.flatten().long()  # Ensure labels are integer values for classification problems
+            
+            yhat = net(X)  # Directly use the model as callable (more idiomatic than `net.forward`)
+            loss = criterion(yhat, y)
+            optimizer.zero_grad()  # Clear existing gradients before backward pass
+            loss.backward()  # Compute gradients of the loss wrt model parameters
+            optimizer.step()  # Update model parameters
+
+
+def mse_cal(data_loader, net):
+    """
+    Calculate the Mean Squared Error (MSE) loss for a dataset given a model.
+
+    This function iterates through the data provided by a DataLoader, computes the model's predictions,
+    and then calculates the MSE loss compared to the actual labels. It's suitable for regression tasks.
+
+    Parameters:
+    - data_loader (torch.utils.data.DataLoader): DataLoader providing batches of data.
+    - net (torch.nn.Module): The model used for making predictions.
+
+    Returns:
+    - float: The mean squared error loss computed across the entire dataset.
+    """
+    mse_loss = 0.0
+    total_samples = 0
+    for X, y in data_loader:
+        yhat = net(X)
+        mse_loss += F.mse_loss(yhat, y, reduction='sum').item()  # Sum up batch losses
+        total_samples += y.size(0)
+    return mse_loss / total_samples  # Return mean loss
+
+
+def accuracy_cal(data_loader, net):
+    """
+    Calculate the accuracy of a classification model given a DataLoader.
+
+    This function processes batches of data to compute predictions and compares these
+    against the true labels to compute the accuracy. It assumes the output of the model
+    `net` is logits, which are then passed through a softmax function to convert them to
+    probabilities before calculating accuracy.
+
+    Parameters:
+    - data_loader (torch.utils.data.DataLoader): DataLoader providing batches of data.
+    - net (torch.nn.Module): The model used for making predictions.
+
+    Returns:
+    - float: The accuracy of the model computed across the entire dataset.
+    """
+    correct_predictions = 0
+    total_predictions = 0
+    for X, y in data_loader:
+        zhat = net(X)
+        soft_z = F.softmax(zhat, dim=1)
+        predicted_labels = torch.argmax(soft_z, dim=1)
+        correct_predictions += (predicted_labels == y).sum().item()
+        total_predictions += y.size(0)
+    return correct_predictions / total_predictions
 
