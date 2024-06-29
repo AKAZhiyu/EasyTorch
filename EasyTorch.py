@@ -8,7 +8,7 @@ import numpy as np
 
 # pytorch
 import torch
-from torch import nn,optim
+from torch import nn, optim
 import torch.nn.functional as F
 from torch.utils.data import Dataset, TensorDataset, DataLoader
 from torch.utils.data import Dataset, DataLoader, random_split
