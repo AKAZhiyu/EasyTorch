@@ -2,6 +2,7 @@
 
 `EasyTorch` is a NOOB library designed to simplify the typical workflows in deep learning. It provides streamlined functionalities for dataset generation, batching, training, visualization, and model persistence. 
 
+Somebody may ask: "Why this repo contains so much redundant docstring?" That's because English is not my native language, and I'm practising FXXKING language.
 ## Features
 
 ### 1. Simplified Dataset Generation
