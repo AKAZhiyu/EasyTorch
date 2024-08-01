@@ -1468,3 +1468,134 @@ class EarlyStopping():
                 self.early_stop = True
         return self.early_stop
         #这一轮迭代的损失与历史最低损失之间的差 - 阈值
+
+def IterOnce(net,criterion,opt,x,y):
+    """
+    对模型进行一次迭代的函数
+    
+    net: 实例化后的架构
+    criterion: 损失函数
+    opt: 优化算法
+    x: 这一个batch中所有的样本
+    y: 这一个batch中所有样本的真实标签
+    """
+    sigma = net.forward(x)
+    loss = criterion(sigma,y)
+    loss.backward()
+    opt.step()
+    opt.zero_grad(set_to_none=True) #比起设置梯度为0，让梯度为None会更节约内存
+    yhat = torch.max(sigma,1)[1]
+    correct = torch.sum(yhat == y)
+    return correct,loss
+
+def TestOnce(net,criterion,x,y):
+    """
+    对一组数据进行测试并输出测试结果的函数
+    
+    net: 经过训练后的架构
+    criterion：损失函数
+    x：要测试的数据的所有样本
+    y：要测试的数据的真实标签
+    """
+    #对测试，一定要阻止计算图追踪
+    #这样可以节省很多内存，加速运算
+    with torch.no_grad(): 
+        sigma = net.forward(x)
+        loss = criterion(sigma,y)
+        yhat = torch.max(sigma,1)[1]
+        correct = torch.sum(yhat == y)
+    return correct,loss
+    
+def fit_test(net,batchdata,testdata,criterion,opt,epochs,tol,modelname,PATH):
+    """
+    对模型进行训练，并在每个epoch后输出训练集和测试集上的准确率/损失
+    以实现对模型的监控
+    实现模型的保存
+    
+    参数说明：
+    net: 实例化后的网络
+    batchdata：使用Dataloader分割后的训练数据
+    testdata：使用Dataloader分割后的测试数据
+    criterion：所使用的损失函数
+    opt：所使用的优化算法
+    epochs：一共要使用完整数据集epochs次
+    tol：提前停止时测试集上loss下降的阈值，连续5次loss下降不超过tol就会触发提前停止
+    modelname：现在正在运行的模型名称，用于保存权重时作为文件名
+    PATH：将权重文件保存在path目录下
+    
+    """
+    
+    SamplePerEpoch = batchdata.dataset.__len__() #整个epoch里有多少个样本
+    allsamples = SamplePerEpoch*epochs
+    trainedsamples = 0
+    trainlosslist = []
+    testlosslist = []
+    early_stopping = EarlyStopping(tol=tol)
+    highestacc = None
+    
+    for epoch in range(1,epochs+1):
+        net.train()
+        correct_train = 0
+        loss_train = 0
+        for batch_idx, (x, y) in enumerate(batchdata):
+            y = y.view(x.shape[0])
+            correct, loss = IterOnce(net,criterion,opt,x,y)
+            trainedsamples += x.shape[0]
+            loss_train += loss
+            correct_train += correct
+            
+            if (batch_idx+1) % 125 == 0:
+                #现在进行到了哪个epoch
+                #现在训练到了多少个样本
+                #总共要训练多少个样本
+                #现在的训练的样本占总共需要训练的样本的百分比
+                print('Epoch{}:[{}/{}({:.0f}%)]'.format(epoch
+                                                       ,trainedsamples
+                                                       ,allsamples
+                                                       ,100*trainedsamples/allsamples))
+            
+        TrainAccThisEpoch = float(correct_train*100)/SamplePerEpoch
+        TrainLossThisEpoch = float(loss_train*100)/SamplePerEpoch #平均每个样本上的损失
+        trainlosslist.append(TrainLossThisEpoch)
+    
+        #每次训练完一个epoch，就在测试集上验证一下模型现在的效果
+        net.eval()
+        loss_test = 0
+        correct_test = 0
+        loss_test = 0
+        TestSample = testdata.dataset.__len__()
+
+        for x,y in testdata:
+            y = y.view(x.shape[0])
+            correct, loss = TestOnce(net,criterion,x,y)
+            loss_test += loss
+            correct_test += correct
+
+        TestAccThisEpoch = float(correct_test * 100)/TestSample
+        TestLossThisEpoch = float(loss_test * 100)/TestSample
+        testlosslist.append(TestLossThisEpoch)
+        
+        #对每一个epoch，打印训练和测试的结果
+        #训练集上的损失，测试集上的损失，训练集上的准确率，测试集上的准确率
+        print("\t Train Loss:{:.6f}, Test Loss:{:.6f}, Train Acc:{:.3f}%, Test Acc:{:.3f}%".format(TrainLossThisEpoch
+                                                                                                  ,TestLossThisEpoch
+                                                                                                  ,TrainAccThisEpoch
+                                                                                                  ,TestAccThisEpoch))
+        
+        #如果测试集准确率出现新高/测试集loss出现新低，那我会保存现在的这一组权重
+        if highestacc == None: #首次进行测试
+            highestacc = TestAccThisEpoch
+        if highestacc < TestAccThisEpoch:
+            highestacc = TestAccThisEpoch
+            torch.save(net.state_dict(),os.path.join(PATH,modelname+".pt"))
+            print("\t Weight Saved")
+        
+        #提前停止
+        early_stop = early_stopping(TestLossThisEpoch)
+        if early_stop == "True":
+            break
+            
+    print("Complete")
+    return trainlosslist, testlosslist
+
+
