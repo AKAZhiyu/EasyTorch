@@ -1592,10 +1592,169 @@ def fit_test(net,batchdata,testdata,criterion,opt,epochs,tol,modelname,PATH):
         
         #提前停止
         early_stop = early_stopping(TestLossThisEpoch)
-        if early_stop == "True":
+        if early_stop:
             break
             
     print("Complete")
     return trainlosslist, testlosslist
 
+def fit_test_gpu(net,batchdata,testdata,criterion,opt,epochs,tol,modelname,PATH):
+    """
+    对模型进行训练，并在每个epoch后输出训练集和测试集上的准确率/损失
+    以实现对模型的监控
+    实现模型的保存
+    
+    参数说明：
+    net: 实例化后的网络
+    batchdata：使用Dataloader分割后的训练数据
+    testdata：使用Dataloader分割后的测试数据
+    criterion：所使用的损失函数
+    opt：所使用的优化算法
+    epochs：一共要使用完整数据集epochs次
+    tol：提前停止时测试集上loss下降的阈值，连续5次loss下降不超过tol就会触发提前停止
+    modelname：现在正在运行的模型名称，用于保存权重时作为文件名
+    PATH：将权重文件保存在path目录下
+    
+    """
+    
+    SamplePerEpoch = batchdata.dataset.__len__() #整个epoch里有多少个样本
+    allsamples = SamplePerEpoch*epochs
+    trainedsamples = 0
+    trainlosslist = []
+    testlosslist = []
+    early_stopping = EarlyStopping(tol=tol)
+    highestacc = None
+    
+    for epoch in range(1,epochs+1):
+        net.train()
+        correct_train = 0
+        loss_train = 0
+        for batch_idx, (x, y) in enumerate(batchdata):
+            #non_blocking 非阻塞 = True
+            x = x.to(device,non_blocking=True)
+            y = y.to(device,non_blocking=True).view(x.shape[0])
+            correct, loss = IterOnce(net,criterion,opt,x,y)
+            
+            #计算样本总量、总的correct、loss
+            trainedsamples += x.shape[0]
+            loss_train += loss
+            correct_train += correct
+            
+            if (batch_idx+1) % 125 == 0:
+                #现在进行到了哪个epoch
+                #现在训练到了多少个样本
+                #总共要训练多少个样本
+                #现在的训练的样本占总共需要训练的样本的百分比
+                print('Epoch{}:[{}/{}({:.0f}%)]'.format(epoch
+                                                       ,trainedsamples
+                                                       ,allsamples
+                                                       ,100*trainedsamples/allsamples))
+            
+        TrainAccThisEpoch = float(correct_train*100)/SamplePerEpoch
+        TrainLossThisEpoch = float(loss_train*100)/SamplePerEpoch #平均每个样本上的损失
+        trainlosslist.append(TrainLossThisEpoch)
+        
+        #清理GPU内存
+        #清理掉一个epoch循环下面不再需要的中间变量
+        del x,y,correct,loss,correct_train,loss_train #删除数据与变量
+        gc.collect() #清除数据与变量相关的缓存
+        torch.cuda.empty_cache() #缓存分配器分配出去的内存给释放掉
+    
+        #每次训练完一个epoch，就在测试集上验证一下模型现在的效果
+        net.eval()
+        loss_test = 0
+        correct_test = 0
+        loss_test = 0
+        TestSample = testdata.dataset.__len__()
 
+        for x,y in testdata:
+            x = x.to(device, non_blocking=True)
+            y = y.to(device,non_blocking=True).view(x.shape[0])
+            correct, loss = TestOnce(net,criterion,x,y)
+            loss_test += loss
+            correct_test += correct
+
+        TestAccThisEpoch = float(correct_test * 100)/TestSample
+        TestLossThisEpoch = float(loss_test * 100)/TestSample
+        testlosslist.append(TestLossThisEpoch)
+        
+        #清理GPU内存
+        del x,y,correct,loss,correct_test,loss_test
+        gc.collect()
+        torch.cuda.empty_cache()
+        
+        #对每一个epoch，打印训练和测试的结果
+        #训练集上的损失，测试集上的损失，训练集上的准确率，测试集上的准确率
+        print("\t Train Loss:{:.6f}, Test Loss:{:.6f}, Train Acc:{:.3f}%, Test Acc:{:.3f}%".format(TrainLossThisEpoch
+                                                                                                  ,TestLossThisEpoch
+                                                                                                  ,TrainAccThisEpoch
+                                                                                                  ,TestAccThisEpoch))
+        
+        #如果测试集准确率出现新高/测试集loss出现新低，那我会保存现在的这一组权重
+        if highestacc == None: #首次进行测试
+            highestacc = TestAccThisEpoch
+        if highestacc < TestAccThisEpoch:
+            highestacc = TestAccThisEpoch
+            torch.save(net.state_dict(),os.path.join(PATH,modelname+".pt"))
+            print("\t Weight Saved")
+        
+        #提前停止
+        early_stop = early_stopping(TestLossThisEpoch)
+        if early_stop:
+            break
+            
+    print("Complete")
+    return trainlosslist, testlosslist
+
+#绘图函数
+def plotloss(trainloss, testloss):
+    plt.figure(figsize=(10, 7))
+    plt.plot(trainloss, color="red", label="Trainloss")
+    plt.plot(testloss, color="orange", label="Testloss")
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.show()
+
+def full_procedure(net,epochs,bs,modelname, PATH, lr=0.001,alpha=0.99,gamma=0,wd=0,tol=10**(-5)):
+    
+    torch.manual_seed(1412)
+    
+    #分割数据
+    batchdata = DataLoader(train,batch_size=bs,shuffle=True
+                       ,drop_last=False,num_workers = 4) #线程 - 调度计算资源的最小单位
+    testdata = DataLoader(test,batch_size=bs,shuffle=False
+                      ,drop_last=False,num_workers = 4)
+    
+    #损失函数，优化算法
+    criterion = nn.CrossEntropyLoss(reduction="sum") #进行损失函数计算时，最后输出结果的计算模式
+    opt = optim.RMSprop(net.parameters(),lr=lr
+                        ,alpha=alpha,momentum=gamma,weight_decay=wd)
+    
+    #训练与测试
+    trainloss, testloss = fit_test(net,batchdata,testdata,criterion,opt,epochs,tol,modelname,PATH)
+    
+    return trainloss, testloss
+
+
+def full_procedure_gpu(net,epochs,bs,modelname, PATH, lr=0.001,alpha=0.99,gamma=0,wd=0,tol=10**(-5)):
+    
+    torch.cuda.manual_seed(1412)
+    torch.cuda.manual_seed_all(1412)
+    torch.manual_seed(1412)
+    
+    #分割数据
+    batchdata = DataLoader(train,batch_size=bs,shuffle=True
+                       ,drop_last=False,pin_memory=True)
+    testdata = DataLoader(test,batch_size=bs,shuffle=False
+                      ,drop_last=False,pin_memory=True)
+    
+    #损失函数，优化算法
+    criterion = nn.CrossEntropyLoss(reduction="sum") #进行损失函数计算时，最后输出结果的计算模式
+    opt = optim.RMSprop(net.parameters(),lr=lr
+                        ,alpha=alpha,momentum=gamma,weight_decay=wd)
+    
+    #训练与测试
+    trainloss, testloss = fit_test(net,batchdata,testdata,criterion,opt,epochs,tol,modelname,PATH)
+    
+    return trainloss, testloss
